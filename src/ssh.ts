@@ -88,10 +88,7 @@ function parseEtime(s: string): number {
 
 /** One pass over running ssh port-forwards and every listening TCP port. */
 export async function scan(): Promise<Scan> {
-  const [ps, lsof] = await Promise.all([
-    capture(["ps", "-axo", "pid=,etime=,command="]),
-    capture(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"]),
-  ]);
+  const [ps, listeners] = await Promise.all([capture(["ps", "-axo", "pid=,etime=,args="]), scanListeners()]);
 
   const procs: SshProc[] = [];
   for (const line of ps.split("\n")) {
@@ -102,10 +99,28 @@ export async function scan(): Promise<Scan> {
     procs.push({ pid: Number(m[1]), etimeMs: parseEtime(m[2]!), cmd: m[3]!, ...parsed });
   }
 
+  return { procs, listeners };
+}
+
+/** `ss -ltnpH` lines: `LISTEN 0 128 127.0.0.1:17600 0.0.0.0:* users:(("ssh",pid=123,fd=5))`. */
+export function parseSs(out: string): Map<number, Listener> {
+  const listeners = new Map<number, Listener>();
+  for (const line of out.split("\n")) {
+    const m = line.match(/^LISTEN\s+\d+\s+\d+\s+\S*:(\d+)\s+\S+\s*(?:users:\(\("([^"]*)",pid=(\d+))?/);
+    if (!m) continue;
+    const port = Number(m[1]);
+    // sockets of other users come without process info; the port is still taken
+    if (!listeners.has(port) || m[3]) listeners.set(port, { pid: Number(m[3] ?? 0), command: m[2] ?? "another user's process" });
+  }
+  return listeners;
+}
+
+/** `lsof -F pcn` output: one `p<pid>`, `c<command>` then `n<addr:port>` per socket. */
+export function parseLsof(out: string): Map<number, Listener> {
   const listeners = new Map<number, Listener>();
   let pid = 0;
   let command = "";
-  for (const line of lsof.split("\n")) {
+  for (const line of out.split("\n")) {
     const v = line.slice(1);
     if (line[0] === "p") pid = Number(v);
     else if (line[0] === "c") command = v;
@@ -114,7 +129,14 @@ export async function scan(): Promise<Scan> {
       if (port && !listeners.has(port)) listeners.set(port, { pid, command });
     }
   }
-  return { procs, listeners };
+  return listeners;
+}
+
+const useSs = process.platform === "linux" && !!Bun.which("ss");
+
+async function scanListeners(): Promise<Map<number, Listener>> {
+  // ss ships with every Linux distro (iproute2); lsof is the one macOS has
+  return useSs ? parseSs(await capture(["ss", "-ltnpH"])) : parseLsof(await capture(["lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn"]));
 }
 
 export function sshArgs(t: Pick<Tunnel, "local_port" | "remote_host" | "remote_port">, dest: string): string[] {

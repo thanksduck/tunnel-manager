@@ -10,13 +10,27 @@ is bound to, which service it is, whether it is up, and why it is not.
 
 ## Install
 
-Requires [Bun](https://bun.sh) 1.4+ to build, and macOS for the launchd supervisor.
+Prebuilt for macOS (Apple silicon) and Linux (x86-64 and arm64, glibc).
 
 ```bash
-bun install
-bun run install-bin      # compiles a single binary to ~/.local/bin/tnl
-tnl daemon install       # optional: auto-reconnect and start at login
+brew install thanksduck/tap/tnl
 ```
+
+Or download a binary from [Releases](https://github.com/thanksduck/tunnel-manager/releases):
+
+```bash
+curl -fsSL "https://github.com/thanksduck/tunnel-manager/releases/latest/download/tnl-$(uname -s | tr A-Z a-z)-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/').tar.gz" | tar -xz
+mv tnl ~/.local/bin/
+```
+
+Then, optionally, enable auto-reconnect and start at login:
+
+```bash
+tnl daemon install
+```
+
+It needs `ssh` and, for the Tailscale features, the `tailscale` CLI. On Linux, switching
+accounts without sudo needs `sudo tailscale set --operator=$USER` once.
 
 ## Use
 
@@ -53,7 +67,8 @@ Header tabs, rows, footer keys and dialog buttons are all clickable.
   exits within ~45 seconds instead of hanging. They survive `tnl` and the supervisor exiting.
 - **State is observed, not assumed.** Each refresh reads `ps` and `lsof` to see which ssh
   process really holds which local port, so a tunnel killed from outside shows as dropped.
-- **Supervisor** (`tnl daemon install`) is a launchd agent that checks every 3 seconds and
+- **Supervisor** (`tnl daemon install`) is a launchd agent on macOS and a systemd user
+  service on Linux. It checks every 3 seconds and
   restarts wanted tunnels with backoff (2s → 60s). Every start and drop is recorded and
   shown in `tnl logs`.
 - **Tailscale.** Only one Tailscale account can be active at a time. A tunnel whose host
@@ -81,7 +96,8 @@ Header tabs, rows, footer keys and dialog buttons are all clickable.
 | `~/.tunnel-manager/tunnels.db` | tunnel definitions, state and history (SQLite) |
 | `~/.tunnel-manager/logs/<name>.log` | ssh output per tunnel |
 | `~/.tunnel-manager/logs/daemon.log` | supervisor log |
-| `~/Library/LaunchAgents/dev.tnl.supervisor.plist` | launchd agent, if installed |
+| `~/Library/LaunchAgents/dev.tnl.supervisor.plist` | supervisor on macOS, if installed |
+| `~/.config/systemd/user/tnl-supervisor.service` | supervisor on Linux, if installed |
 
 Set `TNL_HOME` to use a different data directory.
 
@@ -93,10 +109,27 @@ Set `TNL_HOME` to use a different data directory.
 - An imported ssh process that carries several `-L` forwards becomes several entries
   sharing one process: stopping one stops them all until they are restarted separately.
 
+- On Linux the supervisor is a systemd *user* service, which stops when you log out unless
+  lingering is on: `loginctl enable-linger $USER`.
+- No Intel Mac or Alpine (musl) builds.
+
 ## Development
 
+Requires [Bun](https://bun.sh) (version in `.bun-version`).
+
 ```bash
+bun install
 bun src/cli.ts           # run from source
 bun run typecheck
+bun run install-bin      # compile and copy to ~/.local/bin/tnl
 TNL_HOME=/tmp/tnl-test bun src/cli.ts ls   # scratch database
 ```
+
+## Releasing
+
+1. Bump `version` in `package.json` and commit.
+2. Tag and push: `git tag v0.2.0 && git push origin main v0.2.0`.
+
+The release workflow builds and tests all three targets (the Linux ones run an
+end-to-end test against a real sshd), publishes a GitHub release with checksums, and
+updates the formula in [thanksduck/homebrew-tap](https://github.com/thanksduck/homebrew-tap).

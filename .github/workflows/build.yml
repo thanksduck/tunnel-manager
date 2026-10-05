@@ -1,0 +1,59 @@
+name: Build
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: darwin-arm64
+            runner: macos-latest
+            target: bun-darwin-arm64
+          # baseline = runs on x86-64 CPUs without AVX2 as well
+          - name: linux-x64
+            runner: ubuntu-latest
+            target: bun-linux-x64-baseline
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            target: bun-linux-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run typecheck
+
+      - name: Compile
+        run: bun build --compile --minify --target=${{ matrix.target }} src/cli.ts --outfile dist/tnl
+
+      - name: Smoke test
+        run: |
+          export TNL_HOME="$RUNNER_TEMP/tnl-smoke"
+          file dist/tnl
+          test "$(./dist/tnl --version)" = "$(jq -r .version package.json)"
+          ./dist/tnl --help
+          ./dist/tnl ls
+          ./dist/tnl ts
+          ./dist/tnl daemon status
+
+      - name: End-to-end test against sshd
+        if: runner.os == 'Linux'
+        run: bash scripts/e2e.sh dist/tnl
+
+      - name: Package
+        run: tar -czf tnl-${{ matrix.name }}.tar.gz -C dist tnl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tnl-${{ matrix.name }}
+          path: tnl-${{ matrix.name }}.tar.gz
+          if-no-files-found: error

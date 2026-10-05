@@ -1,0 +1,99 @@
+name: Release
+
+# Push a tag like v0.2.0 (matching "version" in package.json) to publish a release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  TAP_REPO: thanksduck/homebrew-tap
+
+jobs:
+  check:
+    name: Tag matches package.json
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          want="v$(jq -r .version package.json)"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version ($want)"
+            exit 1
+          fi
+
+  build:
+    needs: check
+    uses: ./.github/workflows/build.yml
+
+  release:
+    name: GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - run: sha256sum tnl-*.tar.gz | tee checksums.txt
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" tnl-*.tar.gz checksums.txt \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: checksums
+          path: checksums.txt
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      TAP_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+    steps:
+      - name: Skip when the tap key is not configured
+        if: env.TAP_KEY == ''
+        run: echo "::warning::HOMEBREW_TAP_DEPLOY_KEY is not set, the Homebrew formula was not updated"
+
+      - uses: actions/checkout@v4
+        if: env.TAP_KEY != ''
+
+      - uses: actions/checkout@v4
+        if: env.TAP_KEY != ''
+        with:
+          repository: ${{ env.TAP_REPO }}
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          path: tap
+
+      - uses: actions/download-artifact@v4
+        if: env.TAP_KEY != ''
+        with:
+          name: checksums
+
+      - uses: oven-sh/setup-bun@v2
+        if: env.TAP_KEY != ''
+        with:
+          bun-version-file: .bun-version
+
+      - name: Write formula and push
+        if: env.TAP_KEY != ''
+        run: |
+          mkdir -p tap/Formula
+          bun scripts/formula.ts "${GITHUB_REF_NAME#v}" checksums.txt > tap/Formula/tnl.rb
+          cat tap/Formula/tnl.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/tnl.rb
+          git diff --cached --quiet && { echo "formula unchanged"; exit 0; }
+          git commit -m "tnl ${GITHUB_REF_NAME#v}"
+          git push

@@ -40,7 +40,7 @@ ${bold("Usage")}
   tnl import                       adopt ssh -L processes that are already running
   tnl ts                           Tailscale accounts and machines
   tnl ts switch <tailnet> [-y]     switch account (shows which tunnels drop)
-  tnl daemon install|uninstall|status|run    background supervisor (launchd)
+  tnl daemon install|uninstall|status|run    background supervisor (launchd / systemd)
 
 ${bold("Example")}
   tnl add wellvibe-db root@wellvibe 17600:5432 --up
@@ -317,7 +317,8 @@ async function main() {
       if (sub === "status") {
         const st = await daemonStatus();
         console.log(`${st.alive ? green("● running") : red("○ not running")}${st.pid ? dim(`  pid ${st.pid}`) : ""}`);
-        console.log(dim(`launchd: ${st.installed ? (st.loaded ? "installed and loaded" : "installed, not loaded") : "not installed"}  (${st.plist})`));
+        const s = st.service;
+        console.log(dim(s ? `${s.manager}: ${s.installed ? (s.loaded ? "installed and loaded" : "installed, not loaded") : "not installed"}  (${s.file})` : "no launchd or systemd on this machine"));
         console.log(dim(`log: ${st.log}`));
         return;
       }
