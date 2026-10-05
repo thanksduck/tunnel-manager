@@ -1,0 +1,21 @@
+{
+  "name": "tunnel-manager",
+  "version": "0.1.0",
+  "description": "Tailscale-aware SSH tunnel manager with a live terminal dashboard",
+  "module": "src/cli.ts",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "tnl": "src/cli.ts"
+  },
+  "scripts": {
+    "dev": "bun src/cli.ts",
+    "build": "bun build --compile --minify src/cli.ts --outfile dist/tnl",
+    "install-bin": "bun run build && mkdir -p ~/.local/bin && cp dist/tnl ~/.local/bin/.tnl.new && mv -f ~/.local/bin/.tnl.new ~/.local/bin/tnl",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}
